@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m http.server:*)",
+      "Bash(npm create:*)",
+      "Bash(npx sv create:*)",
+      "Bash(npm install:*)",
+      "Bash(npx tailwindcss:*)",
+      "Bash(node_modules/.bin/tailwindcss:*)",
+      "Bash(npm run dev:*)",
+      "Bash(timeout 5 tail:*)",
+      "Bash(cat:*)"
+    ]
+  }
+}

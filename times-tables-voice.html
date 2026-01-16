@@ -1,0 +1,682 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Times Tables Practice 🎯</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        .animate-pulse {
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+    </style>
+</head>
+<body class="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
+    <div id="app"></div>
+
+    <script>
+        // App state
+        let state = {
+            isListening: false,
+            currentProblem: null,
+            transcript: '',
+            feedback: null,
+            sessionStats: [],
+            problemStats: {},
+            showReport: false,
+            startTime: null,
+            autoListen: true,
+            error: null,
+            micPermission: 'unknown',
+            volumeLevel: 0,
+            selectedNumbers: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+            availableProblems: [],
+            showSetup: true,
+            totalProblems: 0
+        };
+
+        let recognition = null;
+        let feedbackTimeout = null;
+        let audioContext = null;
+        let analyser = null;
+        let microphone = null;
+        let gainNode = null;
+        let animationId = null;
+
+        // Initialize speech recognition
+        function initSpeechRecognition() {
+            if (!('webkitSpeechRecognition' in window || 'SpeechRecognition' in window)) {
+                state.error = 'Speech recognition not supported. Please use Chrome or Edge.';
+                render();
+                return;
+            }
+
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            recognition = new SpeechRecognition();
+            recognition.continuous = false;
+            recognition.interimResults = false;
+            recognition.lang = 'en-US';
+
+            recognition.onresult = (event) => {
+                const spokenText = event.results[0][0].transcript;
+                console.log('Speech recognized:', spokenText);
+                state.transcript = spokenText;
+                state.error = null;
+                render(); // Show what was heard before processing
+                setTimeout(() => handleAnswer(spokenText), 500); // Brief delay to show transcript
+            };
+
+            recognition.onerror = (event) => {
+                console.error('Speech recognition error:', event.error);
+                state.isListening = false;
+                
+                if (event.error === 'not-allowed' || event.error === 'permission-denied') {
+                    state.error = 'Microphone access denied. Please allow microphone access.';
+                    state.micPermission = 'denied';
+                } else if (event.error === 'no-speech') {
+                    state.error = 'No speech detected. Try speaking louder.';
+                    if (state.autoListen && state.currentProblem) {
+                        setTimeout(startListening, 1000);
+                    }
+                } else if (event.error === 'network') {
+                    state.error = 'Network error. Speech recognition requires internet.';
+                } else {
+                    state.error = `Error: ${event.error}`;
+                }
+                render();
+            };
+
+            recognition.onstart = () => {
+                console.log('Speech recognition started');
+                state.error = null;
+                state.micPermission = 'granted';
+                render();
+            };
+
+            recognition.onend = () => {
+                console.log('Speech recognition ended');
+                state.isListening = false;
+                render();
+            };
+        }
+
+        // Note: Speech recognition handles its own permissions
+        // We track permission state based on recognition events
+
+        // Initialize audio visualization
+        async function initAudioVisualization() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                analyser = audioContext.createAnalyser();
+                gainNode = audioContext.createGain();
+                microphone = audioContext.createMediaStreamSource(stream);
+
+                analyser.smoothingTimeConstant = 0.8;
+                analyser.fftSize = 256;
+
+                // Set initial gain boost (2.0 = 2x amplification)
+                gainNode.gain.value = 2.0;
+
+                // Connect: microphone -> gain -> analyser
+                microphone.connect(gainNode);
+                gainNode.connect(analyser);
+
+                updateVolume();
+            } catch (err) {
+                console.error('Audio visualization error:', err);
+            }
+        }
+
+        // Update volume level
+        function updateVolume() {
+            if (!analyser) return;
+
+            const bufferLength = analyser.frequencyBinCount;
+            const dataArray = new Uint8Array(bufferLength);
+            analyser.getByteFrequencyData(dataArray);
+
+            let sum = 0;
+            for (let i = 0; i < bufferLength; i++) {
+                sum += dataArray[i];
+            }
+            const average = sum / bufferLength;
+            state.volumeLevel = Math.min(100, (average / 128) * 100);
+
+            // Only update volume bar, don't re-render entire page
+            updateVolumeBar();
+            animationId = requestAnimationFrame(updateVolume);
+        }
+
+        // Update just the volume bar without re-rendering
+        function updateVolumeBar() {
+            const volumeBar = document.querySelector('.volume-bar-fill');
+            if (volumeBar) {
+                volumeBar.style.width = `${state.volumeLevel}%`;
+            }
+        }
+
+        // Stop audio visualization
+        function stopAudioVisualization() {
+            if (animationId) {
+                cancelAnimationFrame(animationId);
+                animationId = null;
+            }
+            if (gainNode) {
+                gainNode.disconnect();
+                gainNode = null;
+            }
+            if (microphone) {
+                microphone.disconnect();
+                microphone = null;
+            }
+            if (audioContext) {
+                audioContext.close();
+                audioContext = null;
+            }
+            analyser = null;
+            state.volumeLevel = 0;
+        }
+
+        // Generate all problems based on selected numbers
+        function generateAllProblems() {
+            const problems = [];
+            const allNumbers = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+            const seen = new Set();
+
+            for (const selectedNum of state.selectedNumbers) {
+                for (const num of allNumbers) {
+                    // Create a normalized key (smaller number first) to avoid duplicates like 0×1 and 1×0
+                    const normalizedKey = selectedNum <= num
+                        ? `${selectedNum}×${num}`
+                        : `${num}×${selectedNum}`;
+
+                    // Only add if we haven't seen this combination before
+                    if (!seen.has(normalizedKey)) {
+                        seen.add(normalizedKey);
+                        problems.push({ num1: selectedNum, num2: num, answer: selectedNum * num });
+                    }
+                }
+            }
+
+            // Shuffle the problems
+            for (let i = problems.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [problems[i], problems[j]] = [problems[j], problems[i]];
+            }
+            state.availableProblems = problems;
+        }
+
+        // Generate new problem
+        function generateProblem() {
+            // If no problems left, session is complete
+            if (state.availableProblems.length === 0) {
+                state.showReport = true;
+                render();
+                return;
+            }
+
+            // Get next problem from the queue
+            state.currentProblem = state.availableProblems.shift();
+            state.transcript = '';
+            state.feedback = null;
+            state.startTime = Date.now();
+            render();
+
+            if (state.autoListen) {
+                setTimeout(startListening, 300);
+            }
+        }
+
+        // Start listening
+        function startListening() {
+            if (!recognition) {
+                state.error = 'Speech recognition not supported';
+                render();
+                return;
+            }
+
+            if (state.isListening) return;
+
+            try {
+                recognition.start();
+                state.isListening = true;
+                state.error = null;
+                render();
+            } catch (error) {
+                console.error('Error starting recognition:', error);
+                if (!error.message.includes('already started')) {
+                    state.error = `Failed to start: ${error.message}`;
+                    render();
+                }
+            }
+        }
+
+        // Stop listening
+        function stopListening() {
+            if (recognition && state.isListening) {
+                recognition.stop();
+                state.isListening = false;
+                render();
+            }
+        }
+
+        // Parse spoken number
+        function parseSpokenNumber(text) {
+            const cleanText = text.toLowerCase().trim();
+            
+            const digitMatch = cleanText.match(/\d+/);
+            if (digitMatch) return parseInt(digitMatch[0]);
+
+            const wordNumbers = {
+                'zero': 0, 'oh': 0, 'o': 0, 'zilch': 0, 'nothing': 0, 'zed': 0, 'none': 0, 'zedd': 0,
+                'one': 1, 'two': 2, 'three': 3, 'four': 4, 'for': 4,
+                'five': 5, 'six': 6, 'seven': 7, 'eight': 8, 'ate': 8, 'nine': 9,
+                'ten': 10, 'eleven': 11, 'twelve': 12, 'thirteen': 13,
+                'fourteen': 14, 'fifteen': 15, 'sixteen': 16, 'seventeen': 17,
+                'eighteen': 18, 'nineteen': 19, 'twenty': 20, 'thirty': 30,
+                'forty': 40, 'fifty': 50, 'sixty': 60, 'seventy': 70,
+                'eighty': 80, 'ninety': 90, 'hundred': 100
+            };
+
+            if (wordNumbers[cleanText] !== undefined) {
+                return wordNumbers[cleanText];
+            }
+
+            const words = cleanText.split(/\s+/);
+            let total = 0;
+            let foundNumber = false;
+            for (const word of words) {
+                if (wordNumbers[word] !== undefined) {
+                    total += wordNumbers[word];
+                    foundNumber = true;
+                }
+            }
+
+            return foundNumber ? total : null;
+        }
+
+        // Handle answer
+        function handleAnswer(spokenText) {
+            if (!state.currentProblem || !state.startTime) return;
+
+            const responseTime = Date.now() - state.startTime;
+            const spokenNumber = parseSpokenNumber(spokenText);
+
+            // If we couldn't parse a number, ignore and restart listening
+            if (spokenNumber === null) {
+                console.log('Could not parse number from:', spokenText);
+                state.transcript = '';
+                render();
+                if (state.autoListen) {
+                    setTimeout(startListening, 500);
+                }
+                return;
+            }
+
+            const isCorrect = spokenNumber === state.currentProblem.answer;
+            
+            const problemKey = `${state.currentProblem.num1}×${state.currentProblem.num2}`;
+            
+            let speedCategory = 'slow';
+            if (responseTime < 2000) speedCategory = 'fast';
+            else if (responseTime < 4000) speedCategory = 'medium';
+
+            const newStat = {
+                problem: problemKey,
+                num1: state.currentProblem.num1,
+                num2: state.currentProblem.num2,
+                answer: state.currentProblem.answer,
+                spokenAnswer: spokenNumber,
+                correct: isCorrect,
+                responseTime,
+                speedCategory
+            };
+            state.sessionStats.push(newStat);
+
+            const current = state.problemStats[problemKey] || { attempts: 0, totalTime: 0, correct: 0 };
+            state.problemStats[problemKey] = {
+                attempts: current.attempts + 1,
+                totalTime: current.totalTime + responseTime,
+                correct: current.correct + (isCorrect ? 1 : 0),
+                num1: state.currentProblem.num1,
+                num2: state.currentProblem.num2
+            };
+
+            state.feedback = {
+                isCorrect,
+                spokenNumber,
+                responseTime,
+                speedCategory
+            };
+
+            render();
+
+            if (feedbackTimeout) clearTimeout(feedbackTimeout);
+            feedbackTimeout = setTimeout(() => {
+                generateProblem();
+            }, isCorrect ? 1500 : 3000);
+        }
+
+        // Get problem children
+        function getProblemChildren() {
+            const problems = Object.entries(state.problemStats).map(([key, stats]) => ({
+                problem: key,
+                avgTime: stats.totalTime / stats.attempts,
+                accuracy: (stats.correct / stats.attempts) * 100,
+                attempts: stats.attempts,
+                ...stats
+            }));
+
+            return problems.sort((a, b) => {
+                if (Math.abs(a.accuracy - b.accuracy) > 10) {
+                    return a.accuracy - b.accuracy;
+                }
+                return b.avgTime - a.avgTime;
+            }).slice(0, 5);
+        }
+
+        // Render functions
+        function renderSetup() {
+            return `
+                <div class="max-w-4xl mx-auto bg-white rounded-2xl shadow-xl p-8">
+                    <h1 class="text-4xl font-bold text-indigo-900 mb-4 text-center">Times Tables Practice 🎯</h1>
+                    <p class="text-center text-gray-600 mb-8">Select which numbers you want to practice (click to toggle)</p>
+
+                    <div class="grid grid-cols-7 gap-3 mb-8">
+                        ${[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(num => {
+                            const isSelected = state.selectedNumbers.includes(num);
+                            return `
+                                <button onclick="toggleNumber(${num})"
+                                        class="aspect-square rounded-xl text-2xl font-bold transition-all ${
+                                            isSelected
+                                                ? 'bg-indigo-600 text-white hover:bg-indigo-700 scale-105 shadow-lg'
+                                                : 'bg-gray-200 text-gray-400 hover:bg-gray-300'
+                                        }">
+                                    ${num}
+                                </button>
+                            `;
+                        }).join('')}
+                        <button onclick="selectAll()" class="aspect-square rounded-xl text-xs font-bold transition-all bg-green-500 text-white hover:bg-green-600 shadow-md">
+                            ALL
+                        </button>
+                        <button onclick="selectNone()" class="aspect-square rounded-xl text-xs font-bold transition-all bg-red-500 text-white hover:bg-red-600 shadow-md">
+                            NONE
+                        </button>
+                        <button onclick="selectRandom()" class="aspect-square rounded-xl text-xs font-bold transition-all bg-purple-500 text-white hover:bg-purple-600 shadow-md">
+                            🎲<br>RAND
+                        </button>
+                        <button onclick="selectHard()" class="aspect-square rounded-xl text-xs font-bold transition-all bg-orange-500 text-white hover:bg-orange-600 shadow-md">
+                            🔥<br>HARD
+                        </button>
+                    </div>
+
+                    <div class="mb-6 p-4 bg-blue-50 rounded-lg">
+                        <p class="text-center text-gray-700">
+                            <span class="font-bold text-indigo-900">${state.selectedNumbers.length}</span> numbers selected
+                            <span class="mx-2">•</span>
+                            <span class="font-bold text-indigo-900">${state.selectedNumbers.length * 13}</span> total problems
+                            <span class="text-sm text-gray-500 block mt-1">(each number × 0-12)</span>
+                        </p>
+                    </div>
+
+                    <button onclick="startPractice()"
+                            ${state.selectedNumbers.length === 0 ? 'disabled' : ''}
+                            class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-4 px-6 rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-indigo-600">
+                        🚀 Start Practice
+                    </button>
+                </div>
+            `;
+        }
+
+        function renderReport() {
+            const problemChildren = getProblemChildren();
+            const totalProblems = state.sessionStats.length;
+            const correctAnswers = state.sessionStats.filter(s => s.correct).length;
+            const avgTime = state.sessionStats.reduce((sum, s) => sum + s.responseTime, 0) / totalProblems;
+
+            return `
+                <div class="max-w-4xl mx-auto bg-white rounded-2xl shadow-xl p-8">
+                    <h1 class="text-4xl font-bold text-indigo-900 mb-6 text-center">Session Report 📊</h1>
+                    
+                    <div class="grid grid-cols-3 gap-4 mb-8">
+                        <div class="bg-blue-100 rounded-xl p-6 text-center">
+                            <div class="text-3xl font-bold text-blue-900">${totalProblems}</div>
+                            <div class="text-blue-700 mt-1">Problems</div>
+                        </div>
+                        <div class="bg-green-100 rounded-xl p-6 text-center">
+                            <div class="text-3xl font-bold text-green-900">${Math.round((correctAnswers / totalProblems) * 100)}%</div>
+                            <div class="text-green-700 mt-1">Accuracy</div>
+                        </div>
+                        <div class="bg-purple-100 rounded-xl p-6 text-center">
+                            <div class="text-3xl font-bold text-purple-900">${(avgTime / 1000).toFixed(1)}s</div>
+                            <div class="text-purple-700 mt-1">Avg Time</div>
+                        </div>
+                    </div>
+
+                    ${problemChildren.length > 0 ? `
+                        <div class="mb-8">
+                            <h2 class="text-2xl font-bold text-red-700 mb-4">🎯 Problems to Practice</h2>
+                            <div class="space-y-3">
+                                ${problemChildren.map(p => `
+                                    <div class="bg-red-50 border-2 border-red-200 rounded-lg p-4 flex justify-between items-center">
+                                        <div>
+                                            <span class="text-2xl font-bold text-red-900">${p.num1} × ${p.num2}</span>
+                                            <span class="text-gray-600 ml-3">(${p.attempts} attempt${p.attempts > 1 ? 's' : ''})</span>
+                                        </div>
+                                        <div class="text-right">
+                                            <div class="text-sm text-red-700">${p.accuracy.toFixed(0)}% correct</div>
+                                            <div class="text-sm text-gray-600">${(p.avgTime / 1000).toFixed(1)}s avg</div>
+                                        </div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    ` : ''}
+
+                    <button onclick="startNewSession()" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-4 px-6 rounded-xl transition-colors">
+                        🔄 Start New Session
+                    </button>
+                </div>
+            `;
+        }
+
+        function renderPractice() {
+            const feedbackClass = state.feedback 
+                ? state.feedback.isCorrect 
+                    ? state.feedback.speedCategory === 'fast'
+                        ? 'bg-green-100 border-4 border-green-400'
+                        : state.feedback.speedCategory === 'medium'
+                        ? 'bg-yellow-100 border-4 border-yellow-400'
+                        : 'bg-orange-100 border-4 border-orange-400'
+                    : 'bg-red-100 border-4 border-red-400'
+                : '';
+
+            return `
+                <div class="max-w-2xl mx-auto">
+                    <div class="text-center mb-8">
+                        <h1 class="text-5xl font-bold text-indigo-900 mb-2">Times Tables Practice 🎯</h1>
+                        <p class="text-gray-600">${state.sessionStats.length} of ${state.totalProblems} problems completed</p>
+                    </div>
+
+                    <div class="bg-white rounded-2xl shadow-xl p-12 mb-6">
+                        ${state.currentProblem ? `
+                            <div class="text-center mb-8">
+                                <div class="text-7xl font-bold text-indigo-900 mb-4">
+                                    ${state.currentProblem.num1} × ${state.currentProblem.num2}
+                                </div>
+                                <div class="text-2xl text-gray-600">= ?</div>
+                            </div>
+
+                            ${state.feedback ? `
+                                <div class="text-center p-6 rounded-xl mb-6 ${feedbackClass}">
+                                    <div class="text-3xl font-bold mb-2">
+                                        ${state.feedback.isCorrect ? '✓ Correct!' : '✗ Not quite!'}
+                                    </div>
+                                    <div class="text-xl">You said: ${state.feedback.spokenNumber ?? state.transcript}</div>
+                                    ${!state.feedback.isCorrect ? `
+                                        <div class="text-xl mt-2">Answer: ${state.currentProblem.answer}</div>
+                                    ` : ''}
+                                    <div class="text-sm text-gray-600 mt-2">
+                                        ${(state.feedback.responseTime / 1000).toFixed(1)}s
+                                        ${state.feedback.isCorrect && state.feedback.speedCategory === 'fast' ? ' - Lightning fast! ⚡' : ''}
+                                        ${state.feedback.isCorrect && state.feedback.speedCategory === 'medium' ? ' - Good speed! 👍' : ''}
+                                        ${state.feedback.isCorrect && state.feedback.speedCategory === 'slow' ? ' - Try faster! 🐢' : ''}
+                                    </div>
+                                </div>
+                            ` : ''}
+
+                            ${!state.feedback && state.transcript ? `
+                                <div class="text-center mb-6">
+                                    <div class="text-sm text-gray-500 mb-1">You said:</div>
+                                    <div class="text-2xl font-bold text-indigo-600 bg-indigo-50 rounded-lg py-3 px-6 inline-block">
+                                        "${state.transcript}"
+                                    </div>
+                                </div>
+                            ` : ''}
+
+                            <div class="flex flex-col items-center gap-4">
+                                <div class="relative">
+                                    <button onclick="${state.isListening ? 'stopListening()' : 'startListening()'}"
+                                            ${state.feedback ? 'disabled' : ''}
+                                            class="p-8 rounded-full transition-all ${state.isListening ? 'bg-red-500 hover:bg-red-600 scale-110' : 'bg-indigo-600 hover:bg-indigo-700'} text-white disabled:opacity-50 disabled:cursor-not-allowed shadow-lg">
+                                        ${state.isListening ? '🎤' : '🎤'}
+                                    </button>
+                                </div>
+
+                                <div class="text-center text-sm text-gray-600">
+                                    ${state.isListening ? 'Listening...' : state.autoListen ? 'Auto-listening enabled • Press Space' : 'Auto-listening disabled • Press Space to re-enable'}
+                                </div>
+
+                                ${state.isListening ? `
+                                    <div class="w-48 h-3 bg-gray-200 rounded-full overflow-hidden">
+                                        <div class="volume-bar-fill h-full bg-gradient-to-r from-green-400 via-yellow-400 to-red-500 transition-all duration-100"
+                                             style="width: ${state.volumeLevel}%"></div>
+                                    </div>
+                                ` : ''}
+                            </div>
+
+                            ${state.error ? `
+                                <div class="mt-4 bg-red-100 border-2 border-red-300 rounded-lg p-4 text-center">
+                                    <p class="text-red-800 font-semibold">${state.error}</p>
+                                </div>
+                            ` : ''}
+
+                            <div class="mt-4 text-xs text-gray-400 text-center">
+                                Mic: ${state.micPermission} | Recognition: ${recognition ? 'initialized' : 'not available'}
+                            </div>
+                        ` : ''}
+                    </div>
+
+                    <div class="flex gap-4">
+                        <button onclick="toggleAutoListen()" class="flex-1 bg-white hover:bg-gray-50 border-2 border-gray-300 text-gray-700 font-semibold py-3 px-6 rounded-xl transition-colors">
+                            Auto-listen: ${state.autoListen ? 'ON' : 'OFF'}
+                        </button>
+                        <button onclick="generateProblem()" class="flex-1 bg-white hover:bg-gray-50 border-2 border-gray-300 text-gray-700 font-semibold py-3 px-6 rounded-xl transition-colors">
+                            🔄 Skip
+                        </button>
+                        <button onclick="showReport()" ${state.sessionStats.length === 0 ? 'disabled' : ''} class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 px-6 rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                            📈 Report
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+
+        function render() {
+            const app = document.getElementById('app');
+            app.innerHTML = `
+                <div class="p-8">
+                    ${state.showSetup ? renderSetup() : state.showReport ? renderReport() : renderPractice()}
+                </div>
+            `;
+        }
+
+        // UI event handlers - expose to global scope
+        window.toggleNumber = function(num) {
+            const index = state.selectedNumbers.indexOf(num);
+            if (index > -1) {
+                state.selectedNumbers.splice(index, 1);
+            } else {
+                state.selectedNumbers.push(num);
+                state.selectedNumbers.sort((a, b) => a - b);
+            }
+            render();
+        };
+
+        window.selectAll = function() {
+            state.selectedNumbers = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+            render();
+        };
+
+        window.selectNone = function() {
+            state.selectedNumbers = [];
+            render();
+        };
+
+        window.selectRandom = function() {
+            const allNumbers = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+            // Randomly select 3-7 numbers
+            const count = Math.floor(Math.random() * 5) + 3;
+            const shuffled = [...allNumbers].sort(() => Math.random() - 0.5);
+            state.selectedNumbers = shuffled.slice(0, count).sort((a, b) => a - b);
+            render();
+        };
+
+        window.selectHard = function() {
+            // Select the traditionally harder times tables: 6, 7, 8, 9, 11, 12
+            state.selectedNumbers = [6, 7, 8, 9, 11, 12];
+            render();
+        };
+
+        window.startPractice = function() {
+            if (state.selectedNumbers.length === 0) return;
+            state.showSetup = false;
+            generateAllProblems();
+            state.totalProblems = state.availableProblems.length;
+            generateProblem();
+        };
+
+        window.toggleAutoListen = function() {
+            state.autoListen = !state.autoListen;
+            render();
+        };
+
+        window.showReport = function() {
+            state.showReport = true;
+            render();
+        };
+
+        window.startNewSession = function() {
+            state.sessionStats = [];
+            state.problemStats = {};
+            state.showReport = false;
+            state.showSetup = true;
+            state.totalProblems = 0;
+            render();
+        };
+
+        window.startListening = startListening;
+        window.stopListening = stopListening;
+        window.generateProblem = generateProblem;
+
+        // Keyboard event handler
+        document.addEventListener('keydown', (event) => {
+            // Space bar to start listening
+            if (event.code === 'Space' && !state.showSetup && !state.showReport && !state.feedback && !state.isListening) {
+                event.preventDefault(); // Prevent page scroll
+                startListening();
+            }
+        });
+
+        // Initialize
+        initSpeechRecognition();
+        initAudioVisualization();
+        render();
+    </script>
+</body>
+</html>
