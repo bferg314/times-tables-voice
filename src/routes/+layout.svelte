@@ -1,10 +1,14 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import type { Snippet } from 'svelte';
 	import '../app.css';
-	import favicon from '$lib/assets/favicon.svg';
 	import { isDarkMode } from '$lib/stores/theme';
 
-	let { children } = $props();
+	interface Props {
+		children: Snippet;
+	}
+
+	let { children }: Props = $props();
 
 	// Ensure dark mode is applied on initial load
 	onMount(() => {
@@ -14,7 +18,6 @@
 </script>
 
 <svelte:head>
-	<link rel="icon" href={favicon} />
 	<!-- Prevent flash of unstyled content - apply dark mode before page renders -->
 	<script>
 		// This runs before the page renders
