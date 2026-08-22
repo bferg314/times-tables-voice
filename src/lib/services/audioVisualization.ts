@@ -38,11 +38,9 @@ export class AudioVisualizationService {
 			this.frequencyData = new Uint8Array(new ArrayBuffer(this.analyser.frequencyBinCount));
 			this.updateVolume();
 		} catch (err) {
-			console.error('Audio visualization error:', err);
-			audioState.update((s) => ({
-				...s,
-				error: 'Could not access the microphone. Please allow microphone access.'
-			}));
+			// The volume meter is decorative. Speech recognition owns microphone error
+			// reporting, so failing here must not clobber its message with a second one.
+			console.debug('[volume-meter] disabled:', err);
 			this.stop();
 		}
 	}

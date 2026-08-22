@@ -6,6 +6,8 @@ export interface BrowserInfo {
 	isSupported: boolean;
 	browserName: string;
 	reason?: string;
+	/** What is blocking voice input, so callers can give the right advice. */
+	cause?: 'browser' | 'insecure-context' | 'ssr';
 	recommendedBrowsers: string[];
 }
 
@@ -29,6 +31,7 @@ export function detectBrowserSupport(): BrowserInfo {
 			isSupported: false,
 			browserName: 'Unknown',
 			reason: 'Server-side rendering',
+			cause: 'ssr',
 			recommendedBrowsers: ['Chrome', 'Edge', 'Brave']
 		};
 	}
@@ -74,6 +77,20 @@ export function detectBrowserSupport(): BrowserInfo {
 			isSupported: false,
 			browserName,
 			reason,
+			cause: 'browser',
+			recommendedBrowsers
+		};
+	}
+
+	// The API object exists on insecure origins but the microphone is blocked, which
+	// surfaces as a bare "not-allowed" error. Catch it here so the cause is nameable.
+	// Browsers treat localhost as secure; a plain-HTTP LAN or tailnet address is not.
+	if (!window.isSecureContext) {
+		return {
+			isSupported: false,
+			browserName,
+			reason: `Voice input needs a secure connection. This page is on ${window.location.protocol}//${window.location.host}, which the browser does not treat as secure`,
+			cause: 'insecure-context',
 			recommendedBrowsers
 		};
 	}

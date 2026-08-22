@@ -139,7 +139,6 @@
 
 		retryTimeout = setTimeout(() => {
 			helpMessage.set('');
-			transcript.set('');
 			speechService.start();
 		}, RETRY_DELAY_MS);
 	}
@@ -304,6 +303,17 @@
 								<p class="text-sm text-yellow-800 dark:text-yellow-300 font-semibold transition-colors">
 									{$helpMessage}
 								</p>
+								<!-- Keep the raw transcript visible: "didn't catch that" is far more
+								     useful when it also says what was actually heard. -->
+								{#if $transcript}
+									<p class="text-xs text-yellow-700 dark:text-yellow-400 mt-2 transition-colors">
+										Heard: <span class="font-mono">"{$transcript}"</span>
+									</p>
+								{:else}
+									<p class="text-xs text-yellow-700 dark:text-yellow-400 mt-2 transition-colors">
+										No speech was picked up.
+									</p>
+								{/if}
 							</div>
 						</div>
 					{:else if $transcript}

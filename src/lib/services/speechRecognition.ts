@@ -8,6 +8,11 @@ const RESULT_DISPATCH_MS = 500;
 
 type ResultCallback = (text: string, number: number | null) => void;
 
+/** Speech recognition is hard to observe; trace it during development. */
+function debug(...args: unknown[]) {
+	if (import.meta.env.DEV) console.debug('[speech]', ...args);
+}
+
 /**
  * Wraps the Web Speech API in a one-shot recognizer with a deterministic lifecycle.
  *
@@ -35,10 +40,11 @@ export class SpeechRecognitionService {
 		const support = detectBrowserSupport();
 		if (!support.isSupported) {
 			this.fatal = true;
-			audioState.update((s) => ({
-				...s,
-				error: `${support.reason}. This app requires Chrome, Edge, Brave, or another Chromium-based browser.`
-			}));
+			const advice =
+				support.cause === 'insecure-context'
+					? 'Open it over HTTPS, or on localhost.'
+					: 'This app requires Chrome, Edge, Brave, or another Chromium-based browser.';
+			audioState.update((s) => ({ ...s, error: `${support.reason}. ${advice}` }));
 			return;
 		}
 
@@ -50,6 +56,7 @@ export class SpeechRecognitionService {
 
 		this.recognition.onresult = (event: SpeechRecognitionEvent) => {
 			const spokenText = event.results[0][0].transcript;
+			debug('heard', JSON.stringify(spokenText), `confidence=${event.results[0][0].confidence}`);
 
 			this.gotResult = true;
 			transcript.set(spokenText);
@@ -60,6 +67,7 @@ export class SpeechRecognitionService {
 		};
 
 		this.recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
+			debug('error', event.error);
 			audioState.update((s) => ({ ...s, isListening: false }));
 
 			if (event.error === 'not-allowed' || event.error === 'permission-denied') {
@@ -70,8 +78,26 @@ export class SpeechRecognitionService {
 					error: 'Microphone access denied. Please allow microphone access and reload.'
 				}));
 			} else if (event.error === 'network') {
+				// Chrome streams audio to Google for recognition, so this is usually a
+				// transient connectivity blip. Recoverable, so not fatal.
+				audioState.update((s) => ({
+					...s,
+					error: 'Network error - speech recognition needs an internet connection.'
+				}));
+			} else if (event.error === 'audio-capture') {
+				// No usable input device. A mic will not appear mid-session, so stop retrying.
 				this.fatal = true;
-				audioState.update((s) => ({ ...s, error: 'Network error. Please check your connection.' }));
+				audioState.update((s) => ({
+					...s,
+					error:
+						'No microphone found. Connect a microphone, then check it is selected as the input device for this site.'
+				}));
+			} else if (event.error === 'service-not-allowed') {
+				this.fatal = true;
+				audioState.update((s) => ({
+					...s,
+					error: 'The browser blocked its speech recognition service for this page.'
+				}));
 			} else if (event.error === 'no-speech' || event.error === 'aborted') {
 				// Expected. onend reports the empty listen; the caller decides whether to retry.
 			} else {
@@ -81,10 +107,12 @@ export class SpeechRecognitionService {
 		};
 
 		this.recognition.onstart = () => {
+			debug('started');
 			audioState.update((s) => ({ ...s, isListening: true, error: null }));
 		};
 
 		this.recognition.onend = () => {
+			debug('ended', `gotResult=${this.gotResult}`, `intentionalStop=${this.intentionalStop}`);
 			audioState.update((s) => ({ ...s, isListening: false }));
 
 			const heardNothing = !this.gotResult && !this.intentionalStop && !this.fatal;
