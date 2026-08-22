@@ -13,3 +13,8 @@ export function switchUser(userId: string) {
 export function refreshUsers() {
 	users.set(getUsers());
 }
+
+/** Re-read the active user from storage, e.g. after a deletion clears the pointer. */
+export function reloadCurrentUser() {
+	currentUser.set(getCurrentUser());
+}

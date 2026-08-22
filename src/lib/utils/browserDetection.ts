@@ -6,6 +6,8 @@ export interface BrowserInfo {
 	isSupported: boolean;
 	browserName: string;
 	reason?: string;
+	/** What is blocking voice input, so callers can give the right advice. */
+	cause?: 'browser' | 'insecure-context' | 'ssr';
 	recommendedBrowsers: string[];
 }
 
@@ -29,6 +31,7 @@ export function detectBrowserSupport(): BrowserInfo {
 			isSupported: false,
 			browserName: 'Unknown',
 			reason: 'Server-side rendering',
+			cause: 'ssr',
 			recommendedBrowsers: ['Chrome', 'Edge', 'Brave']
 		};
 	}
@@ -41,21 +44,23 @@ export function detectBrowserSupport(): BrowserInfo {
 		'SpeechRecognition' in window ||
 		'webkitSpeechRecognition' in window;
 
-	// Detect browser
+	// Detect browser. Order matters: Chromium forks all carry 'chrome' in their
+	// user agent, so every fork must be tested before the generic Chrome check.
 	let browserName = 'Unknown';
 
 	if (userAgent.includes('edg/')) {
 		browserName = 'Edge';
-	} else if (userAgent.includes('chrome') && !userAgent.includes('edg')) {
-		browserName = 'Chrome';
-	} else if (userAgent.includes('firefox')) {
-		browserName = 'Firefox';
-	} else if (userAgent.includes('safari') && !userAgent.includes('chrome')) {
-		browserName = 'Safari';
 	} else if (userAgent.includes('opr/') || userAgent.includes('opera')) {
 		browserName = 'Opera';
-	} else if (userAgent.includes('brave')) {
+	} else if ('brave' in navigator || userAgent.includes('brave')) {
+		// Brave omits itself from the user agent, so navigator.brave is the real signal.
 		browserName = 'Brave';
+	} else if (userAgent.includes('firefox')) {
+		browserName = 'Firefox';
+	} else if (userAgent.includes('chrome')) {
+		browserName = 'Chrome';
+	} else if (userAgent.includes('safari')) {
+		browserName = 'Safari';
 	}
 
 	// Determine support
@@ -72,6 +77,20 @@ export function detectBrowserSupport(): BrowserInfo {
 			isSupported: false,
 			browserName,
 			reason,
+			cause: 'browser',
+			recommendedBrowsers
+		};
+	}
+
+	// The API object exists on insecure origins but the microphone is blocked, which
+	// surfaces as a bare "not-allowed" error. Catch it here so the cause is nameable.
+	// Browsers treat localhost as secure; a plain-HTTP LAN or tailnet address is not.
+	if (!window.isSecureContext) {
+		return {
+			isSupported: false,
+			browserName,
+			reason: `Voice input needs a secure connection. This page is on ${window.location.protocol}//${window.location.host}, which the browser does not treat as secure`,
+			cause: 'insecure-context',
 			recommendedBrowsers
 		};
 	}
@@ -83,32 +102,3 @@ export function detectBrowserSupport(): BrowserInfo {
 	};
 }
 
-/**
- * Check if running in Firefox specifically
- */
-export function isFirefox(): boolean {
-	if (typeof window === 'undefined') return false;
-	return navigator.userAgent.toLowerCase().includes('firefox');
-}
-
-/**
- * Check if running in Safari specifically
- */
-export function isSafari(): boolean {
-	if (typeof window === 'undefined') return false;
-	const ua = navigator.userAgent.toLowerCase();
-	return ua.includes('safari') && !ua.includes('chrome');
-}
-
-/**
- * Get a user-friendly message about browser compatibility
- */
-export function getCompatibilityMessage(): string {
-	const info = detectBrowserSupport();
-
-	if (info.isSupported) {
-		return `Great! ${info.browserName} supports voice recognition.`;
-	}
-
-	return `${info.browserName} is not supported. Please use ${info.recommendedBrowsers.join(', ')}, or another Chromium-based browser.`;
-}

@@ -3,13 +3,14 @@ import type {
 	SessionStats,
 	HighScore,
 	CustomProblemSet,
-	PracticeHistory,
-	ProblemSet
+	PracticeHistory
 } from '$lib/types';
+import { sessionAccuracy, sessionAvgTime } from './sessionStats';
 
 // Storage keys
-const KEYS = {
+export const KEYS = {
 	USERS: 'ttvapp_users',
+	THEME: 'ttvapp_theme',
 	CURRENT_USER: 'ttvapp_currentUser',
 	HIGHSCORES: 'ttvapp_highscores',
 	history: (userId: string) => `ttvapp_history_${userId}`,
@@ -119,8 +120,8 @@ export function deleteUser(userId: string): void {
 
 export function saveSession(userId: string, session: SessionStats): void {
 	const history = getUserHistory(userId);
-	session.completedAt = Date.now();
-	history.sessions.push(session);
+	// Copy rather than stamp: the caller hands us the live session store object.
+	history.sessions.push({ ...session, completedAt: session.completedAt ?? Date.now() });
 	setToStorage(KEYS.history(userId), history);
 }
 
@@ -129,11 +130,6 @@ export function getUserHistory(userId: string): PracticeHistory {
 		userId,
 		sessions: []
 	});
-}
-
-export function getAllHistory(): PracticeHistory[] {
-	const users = getUsers();
-	return users.map((user) => getUserHistory(user.id));
 }
 
 // ============================================================================
@@ -151,10 +147,7 @@ export function getHighScores(userId?: string): HighScore[] {
 export function updateHighScore(userId: string, score: HighScore): void {
 	const scores = getHighScores();
 	const existingIndex = scores.findIndex(
-		(s) =>
-			s.userId === userId &&
-			s.problemSet === score.problemSet &&
-			s.customSetId === score.customSetId
+		(s) => s.userId === userId && s.selectionKey === score.selectionKey
 	);
 
 	if (existingIndex >= 0) {
@@ -166,21 +159,8 @@ export function updateHighScore(userId: string, score: HighScore): void {
 	setToStorage(KEYS.HIGHSCORES, scores);
 }
 
-export function getPersonalBest(
-	userId: string,
-	problemSet: ProblemSet | string
-): HighScore | null {
-	const scores = getHighScores(userId);
-
-	// Check if it's a custom set (UUID format)
-	const isCustomSet = problemSet.startsWith('custom_');
-
-	const matchingScores = scores.filter((s) => {
-		if (isCustomSet) {
-			return s.customSetId === problemSet;
-		}
-		return s.problemSet === problemSet;
-	});
+export function getPersonalBest(userId: string, selectionKey: string): HighScore | null {
+	const matchingScores = getHighScores(userId).filter((s) => s.selectionKey === selectionKey);
 
 	if (matchingScores.length === 0) return null;
 
@@ -196,15 +176,16 @@ export function getPersonalBest(
 
 export function isNewHighScore(
 	userId: string,
-	problemSetType: ProblemSet | string,
+	selectionKey: string,
 	session: SessionStats
 ): boolean {
-	const currentBest = getPersonalBest(userId, problemSetType);
+	if (session.answers.length === 0) return false;
+
+	const currentBest = getPersonalBest(userId, selectionKey);
 	if (!currentBest) return true;
 
-	const accuracy = (session.answers.filter((a) => a.correct).length / session.answers.length) * 100;
-	const avgTime =
-		session.answers.reduce((sum, a) => sum + a.responseTime, 0) / session.answers.length;
+	const accuracy = sessionAccuracy(session.answers);
+	const avgTime = sessionAvgTime(session.answers);
 
 	// Higher accuracy wins, or same accuracy with faster time
 	return (

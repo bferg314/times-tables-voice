@@ -1,5 +1,6 @@
 import { writable } from 'svelte/store';
 import type { SessionStats, Problem, SessionAnswer, AppScreen } from '$lib/types';
+import { ALL_NUMBERS } from '$lib/services/problemGenerator';
 
 // Current screen state
 export const currentScreen = writable<AppScreen>('setup');
@@ -15,7 +16,7 @@ export const sessionStats = writable<SessionStats>({
 // Problem state
 export const currentProblem = writable<Problem | null>(null);
 export const availableProblems = writable<Problem[]>([]);
-export const selectedNumbers = writable<number[]>([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+export const selectedNumbers = writable<number[]>([...ALL_NUMBERS]);
 
 // UI state
 export const feedback = writable<SessionAnswer | null>(null);

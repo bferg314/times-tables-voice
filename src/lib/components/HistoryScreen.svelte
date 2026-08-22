@@ -2,11 +2,25 @@
 	import { currentScreen } from '$lib/stores/session';
 	import { currentUser } from '$lib/stores/users';
 	import { getUserHistory, getHighScores } from '$lib/services/storage';
-	import type { SessionStats } from '$lib/types';
+	import { sessionAccuracy, sessionAvgTime, describeSelection } from '$lib/services/sessionStats';
+	import { customSets, findSetForSelection } from '$lib/stores/problemSets';
 
-	$: history = $currentUser ? getUserHistory($currentUser.id) : null;
-	$: highScores = $currentUser ? getHighScores($currentUser.id) : [];
-	$: sessions = history?.sessions || [];
+	/** How many recent sessions to list. */
+	const RECENT_SESSION_LIMIT = 20;
+
+	const history = $derived($currentUser ? getUserHistory($currentUser.id) : null);
+	const highScores = $derived($currentUser ? getHighScores($currentUser.id) : []);
+	const sessions = $derived(history?.sessions ?? []);
+	const recentSessions = $derived(sessions.slice().reverse().slice(0, RECENT_SESSION_LIMIT));
+
+	/** Label a selection, preferring the name of a saved set that still matches it. */
+	function label(numbers: number[] | undefined, storedName?: string): string {
+		const selection = numbers ?? [];
+		return describeSelection(
+			selection,
+			findSetForSelection($customSets, selection)?.name ?? storedName
+		);
+	}
 
 	function goBack() {
 		currentScreen.set('setup');
@@ -17,15 +31,6 @@
 		return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 	}
 
-	function getSessionAccuracy(session: SessionStats): number {
-		if (session.answers.length === 0) return 0;
-		return (session.answers.filter(a => a.correct).length / session.answers.length) * 100;
-	}
-
-	function getSessionAvgTime(session: SessionStats): number {
-		if (session.answers.length === 0) return 0;
-		return session.answers.reduce((sum, a) => sum + a.responseTime, 0) / session.answers.length;
-	}
 </script>
 
 <div class="max-w-6xl mx-auto">
@@ -50,7 +55,7 @@
 					{#each highScores as score}
 						<div class="bg-gradient-to-br from-yellow-50 to-orange-50 dark:from-yellow-900/30 dark:to-orange-900/30 border-2 border-yellow-300 dark:border-yellow-600 rounded-xl p-4 transition-colors">
 							<div class="text-lg font-bold text-orange-900 dark:text-orange-300 mb-2 transition-colors">
-								{score.problemSet === 'all' ? 'All Tables' : score.problemSet === 'hard' ? 'Hard Tables' : score.customSetName || 'Custom'}
+								{label(score.selectedNumbers, score.customSetName)}
 							</div>
 							<div class="space-y-1 text-sm text-gray-700 dark:text-gray-300 transition-colors">
 								<div class="flex justify-between">
@@ -86,18 +91,18 @@
 				</div>
 			{:else}
 				<div class="space-y-3">
-					{#each sessions.slice().reverse().slice(0, 20) as session, index}
-						{@const accuracy = getSessionAccuracy(session)}
-						{@const avgTime = getSessionAvgTime(session)}
+					{#each recentSessions as session, index (session.startedAt)}
+						{@const accuracy = sessionAccuracy(session.answers)}
+						{@const avgTime = sessionAvgTime(session.answers)}
 						<div class="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors">
 							<div class="flex justify-between items-start">
 								<div class="flex-1">
 									<div class="flex items-center gap-3 mb-2">
 										<span class="text-sm text-gray-500 dark:text-gray-400">#{sessions.length - index}</span>
 										<span class="text-sm text-gray-500 dark:text-gray-400">{formatDate(session.startedAt)}</span>
-										{#if session.problemSetType}
+										{#if session.selectedNumbers}
 											<span class="text-xs bg-indigo-100 dark:bg-indigo-900 text-indigo-700 dark:text-indigo-300 px-2 py-1 rounded transition-colors">
-												{session.problemSetType}
+												{label(session.selectedNumbers)}
 											</span>
 										{/if}
 									</div>
@@ -132,9 +137,9 @@
 						</div>
 					{/each}
 				</div>
-				{#if sessions.length > 20}
+				{#if sessions.length > RECENT_SESSION_LIMIT}
 					<div class="text-center text-gray-500 dark:text-gray-400 text-sm mt-4 transition-colors">
-						Showing latest 20 of {sessions.length} sessions
+						Showing latest {RECENT_SESSION_LIMIT} of {sessions.length} sessions
 					</div>
 				{/if}
 			{/if}

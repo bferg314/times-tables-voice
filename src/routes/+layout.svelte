@@ -1,26 +1,19 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import type { Snippet } from 'svelte';
 	import '../app.css';
-	import { isDarkMode } from '$lib/stores/theme';
 
 	interface Props {
 		children: Snippet;
 	}
 
 	let { children }: Props = $props();
-
-	// Ensure dark mode is applied on initial load
-	onMount(() => {
-		// The theme store handles this, but we need to trigger a check
-		isDarkMode.subscribe(() => {});
-	});
 </script>
 
 <svelte:head>
 	<!-- Prevent flash of unstyled content - apply dark mode before page renders -->
 	<script>
-		// This runs before the page renders
+		// Runs before the page renders, so it cannot import KEYS.THEME from the app
+		// bundle - this literal must stay in step with storage.ts.
 		(function() {
 			const stored = localStorage.getItem('ttvapp_theme');
 			const isDark = stored === 'dark' ||

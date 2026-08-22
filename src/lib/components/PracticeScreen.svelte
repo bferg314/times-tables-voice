@@ -14,113 +14,150 @@
 	} from '$lib/stores/session';
 	import { audioState } from '$lib/stores/audio';
 	import { speechService } from '$lib/services/speechRecognition';
+	import { audioService } from '$lib/services/audioVisualization';
 	import { categorizeSpeed } from '$lib/services/problemGenerator';
+	import { practiceProgress } from '$lib/services/sessionStats';
 	import type { SessionAnswer } from '$lib/types';
 	import VolumeBar from './VolumeBar.svelte';
+	import Modal from './Modal.svelte';
 
-	let feedbackTimeout: number | null = null;
-	let showAbandonModal = false;
-	let countdownInterval: number | null = null;
-	let retryCount = 0;
+	/** Pause before auto-listening, so the learner can read the new problem first. */
+	const AUTO_LISTEN_DELAY_MS = 300;
+	/** Feedback dwell times. Whole seconds, so the countdown shown matches reality. */
+	const CORRECT_FEEDBACK_MS = 2000;
+	const WRONG_FEEDBACK_MS = 3000;
+	const COUNTDOWN_TICK_MS = 1000;
+	const RETRY_DELAY_MS = 1500;
 	const MAX_RETRIES = 2;
 
+	let feedbackTimeout: ReturnType<typeof setTimeout> | null = null;
+	let countdownInterval: ReturnType<typeof setInterval> | null = null;
+	let retryTimeout: ReturnType<typeof setTimeout> | null = null;
+	let autoListenTimeout: ReturnType<typeof setTimeout> | null = null;
+	let retryCount = 0;
+
+	let showAbandonModal = $state(false);
+
+	const progress = $derived(
+		practiceProgress({
+			answered: $sessionStats.answers.length,
+			queued: $availableProblems.length,
+			currentAwaitingAnswer: $currentProblem !== null && $feedback === null
+		})
+	);
+
+	const feedbackClass = $derived(
+		!$feedback
+			? ''
+			: !$feedback.correct
+				? 'bg-red-100 dark:bg-red-900/30 border-4 border-red-400 dark:border-red-500'
+				: $feedback.speedCategory === 'fast'
+					? 'bg-green-100 dark:bg-green-900/30 border-4 border-green-400 dark:border-green-500'
+					: $feedback.speedCategory === 'medium'
+						? 'bg-yellow-100 dark:bg-yellow-900/30 border-4 border-yellow-400 dark:border-yellow-500'
+						: 'bg-orange-100 dark:bg-orange-900/30 border-4 border-orange-400 dark:border-orange-500'
+	);
+
 	onMount(() => {
-		// Set up speech recognition callback
+		// The mic is only needed while practising, so the permission prompt and the
+		// analyser loop both start here rather than on app load.
+		audioService.init();
 		speechService.onResult(handleSpeechResult);
-
-		// Generate first problem
 		nextProblem();
-
-		// Handle spacebar
-		window.addEventListener('keydown', handleKeydown);
 	});
 
 	onDestroy(() => {
-		if (feedbackTimeout) clearTimeout(feedbackTimeout);
-		if (countdownInterval) clearInterval(countdownInterval);
-		speechService.stop();
-		window.removeEventListener('keydown', handleKeydown);
+		clearTimers();
+		// destroy() detaches the callback; without it a trailing recognition event
+		// would restart the microphone on whichever screen comes next.
+		speechService.destroy();
+		audioService.stop();
 	});
 
+	function clearTimers() {
+		if (feedbackTimeout) clearTimeout(feedbackTimeout);
+		if (retryTimeout) clearTimeout(retryTimeout);
+		if (autoListenTimeout) clearTimeout(autoListenTimeout);
+		if (countdownInterval) clearInterval(countdownInterval);
+		feedbackTimeout = retryTimeout = autoListenTimeout = null;
+		countdownInterval = null;
+	}
+
 	function handleKeydown(e: KeyboardEvent) {
-		if (e.code === 'Space' && !$feedback && !$audioState.isListening) {
+		if (e.code === 'Space' && !$feedback && !$audioState.isListening && !showAbandonModal) {
 			e.preventDefault();
 			speechService.start();
 		}
 	}
 
 	function nextProblem() {
-		// Clear previous state
+		clearTimers();
+		// Stop before starting: a late result from the previous problem would otherwise
+		// be scored against this one, with a response time measured from the wrong clock.
+		speechService.stop();
+
 		feedback.set(null);
 		transcript.set('');
 		helpMessage.set('');
 		autoAdvanceCountdown.set(0);
-		retryCount = 0; // Reset retry counter for new problem
+		retryCount = 0;
 
-		// Clear countdown interval
-		if (countdownInterval) {
-			clearInterval(countdownInterval);
-			countdownInterval = null;
-		}
-
-		// Check if session complete
 		if ($availableProblems.length === 0) {
 			currentScreen.set('report');
 			return;
 		}
 
-		// Get next problem
 		const problem = $availableProblems[0];
 		availableProblems.update((p) => p.slice(1));
 		currentProblem.set(problem);
 		startTime.set(Date.now());
 
-		// Auto-start listening if enabled
 		if ($audioState.autoListen) {
-			setTimeout(() => speechService.start(), 300);
+			autoListenTimeout = setTimeout(() => speechService.start(), AUTO_LISTEN_DELAY_MS);
 		}
 	}
 
-	function handleSpeechResult(text: string, spokenNumber: number | null) {
-		if (!$currentProblem || !$startTime) return;
-
-		// If we couldn't parse a number, retry a couple times before giving up
-		if (spokenNumber === null) {
-			console.log('Could not parse number from:', text, 'Retry count:', retryCount);
-			retryCount++;
-
-			if (retryCount <= MAX_RETRIES) {
-				// Show brief "try again" message
-				helpMessage.set(`Didn't catch that. Try again! (${retryCount}/${MAX_RETRIES})`);
-
-				// Clear message and restart listening quickly (always restart for retries)
-				setTimeout(() => {
-					helpMessage.set('');
-					transcript.set('');
-					speechService.start();
-				}, 1500);
-			} else {
-				// After max retries, show more detailed help message
-				helpMessage.set("Still having trouble. Please say just a number (like 'zero', 'five', or 'twelve').");
-
-				// Wait longer before restarting (always restart for retries)
-				setTimeout(() => {
-					helpMessage.set('');
-					transcript.set('');
-					retryCount = 0; // Reset for next attempt
-					speechService.start();
-				}, 3000);
-			}
+	function handleUnparsed() {
+		// A denied permission or dead connection will never succeed; retrying would loop.
+		if (speechService.isFatal) {
+			helpMessage.set('Voice input is unavailable. Check the message below the microphone.');
 			return;
 		}
 
-		// Successfully parsed a number - reset retry counter
+		retryCount++;
+
+		if (retryCount > MAX_RETRIES) {
+			helpMessage.set(
+				"Still having trouble. Press Space or tap the microphone, then say just a number (like 'five' or 'twelve')."
+			);
+			return;
+		}
+
+		helpMessage.set(`Didn't catch that. Try again! (${retryCount}/${MAX_RETRIES})`);
+
+		if (!$audioState.autoListen) return;
+
+		retryTimeout = setTimeout(() => {
+			helpMessage.set('');
+			speechService.start();
+		}, RETRY_DELAY_MS);
+	}
+
+	function handleSpeechResult(_text: string, spokenNumber: number | null) {
+		if (!$currentProblem || !$startTime || $feedback) return;
+
+		if (spokenNumber === null) {
+			handleUnparsed();
+			return;
+		}
+
 		retryCount = 0;
 
 		const responseTime = Date.now() - $startTime;
 		const isCorrect = spokenNumber === $currentProblem.answer;
 		const speed = categorizeSpeed(responseTime);
 		const problemKey = `${$currentProblem.num1}×${$currentProblem.num2}`;
+		const { num1, num2 } = $currentProblem;
 
 		const answer: SessionAnswer = {
 			problem: problemKey,
@@ -131,17 +168,15 @@
 			timestamp: Date.now()
 		};
 
-		// Update session stats
 		sessionStats.update((stats) => {
 			stats.answers.push(answer);
 
-			// Update problem stats
-			const current = stats.problemStats[problemKey] || {
+			const current = stats.problemStats[problemKey] ?? {
 				attempts: 0,
 				totalTime: 0,
 				correct: 0,
-				num1: $currentProblem!.num1,
-				num2: $currentProblem!.num2
+				num1,
+				num2
 			};
 
 			stats.problemStats[problemKey] = {
@@ -154,29 +189,16 @@
 			return stats;
 		});
 
-		// Show feedback
 		feedback.set(answer);
 
-		// Auto-advance to next problem with countdown
-		const delayMs = isCorrect ? 1500 : 3000;
-		const delaySeconds = Math.ceil(delayMs / 1000);
-		autoAdvanceCountdown.set(delaySeconds);
+		const delayMs = isCorrect ? CORRECT_FEEDBACK_MS : WRONG_FEEDBACK_MS;
+		autoAdvanceCountdown.set(delayMs / COUNTDOWN_TICK_MS);
 
-		// Start countdown
-		countdownInterval = window.setInterval(() => {
-			autoAdvanceCountdown.update(count => {
-				const newCount = count - 1;
-				if (newCount <= 0 && countdownInterval) {
-					clearInterval(countdownInterval);
-					countdownInterval = null;
-				}
-				return newCount;
-			});
-		}, 1000);
+		countdownInterval = setInterval(() => {
+			autoAdvanceCountdown.update((count) => Math.max(0, count - 1));
+		}, COUNTDOWN_TICK_MS);
 
-		feedbackTimeout = window.setTimeout(() => {
-			nextProblem();
-		}, delayMs);
+		feedbackTimeout = setTimeout(nextProblem, delayMs);
 	}
 
 	function toggleAutoListen() {
@@ -184,10 +206,6 @@
 	}
 
 	function skip() {
-		if (feedbackTimeout) {
-			clearTimeout(feedbackTimeout);
-			feedbackTimeout = null;
-		}
 		nextProblem();
 	}
 
@@ -196,22 +214,13 @@
 	}
 
 	function confirmAbandon() {
+		showAbandonModal = false;
 		resetSession();
 		currentScreen.set('setup');
-		showAbandonModal = false;
 	}
-
-	// Feedback styling with dark mode support
-	$: feedbackClass = $feedback
-		? $feedback.correct
-			? $feedback.speedCategory === 'fast'
-				? 'bg-green-100 dark:bg-green-900/30 border-4 border-green-400 dark:border-green-500'
-				: $feedback.speedCategory === 'medium'
-					? 'bg-yellow-100 dark:bg-yellow-900/30 border-4 border-yellow-400 dark:border-yellow-500'
-					: 'bg-orange-100 dark:bg-orange-900/30 border-4 border-orange-400 dark:border-orange-500'
-			: 'bg-red-100 dark:bg-red-900/30 border-4 border-red-400 dark:border-red-500'
-		: '';
 </script>
+
+<svelte:window onkeydown={handleKeydown} />
 
 <div class="max-w-5xl mx-auto">
 	<!-- Compact header with progress -->
@@ -224,11 +233,11 @@
 			<div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2.5 overflow-hidden transition-colors">
 				<div
 					class="h-full bg-gradient-to-r from-indigo-500 to-purple-600 transition-all duration-500 ease-out"
-					style="width: {($sessionStats.answers.length / $sessionStats.totalProblems) * 100}%"
+					style="width: {progress.percent}%"
 				></div>
 			</div>
 			<p class="text-xs text-gray-500 dark:text-gray-400 mt-1 text-center transition-colors">
-				{$sessionStats.answers.length} of {$sessionStats.totalProblems} ({Math.round(($sessionStats.answers.length / $sessionStats.totalProblems) * 100)}%)
+				{progress.answered} of {progress.total} ({Math.round(progress.percent)}%)
 			</p>
 		</div>
 		<div class="flex-1 flex justify-end gap-2">
@@ -240,7 +249,7 @@
 			</button>
 			<button
 				onclick={showReport}
-				disabled={$sessionStats.answers.length === 0}
+				disabled={progress.answered === 0}
 				class="bg-indigo-600 hover:bg-indigo-700 dark:bg-indigo-500 dark:hover:bg-indigo-600 text-white font-semibold py-2 px-4 rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm"
 			>
 				📈 Report
@@ -250,15 +259,15 @@
 
 	<div class="bg-white dark:bg-gray-800 rounded-2xl shadow-xl transition-colors {feedbackClass}">
 		{#if $currentProblem}
-		<div class="grid grid-cols-2 divide-x divide-gray-200 dark:divide-gray-700">
+		<div class="grid grid-cols-1 md:grid-cols-2 md:divide-x divide-gray-200 dark:divide-gray-700">
 			<!-- Left side: Question and Feedback -->
 			<div class="p-8 flex flex-col justify-center">
 				<!-- Question -->
 				<div class="text-center mb-6">
-					<div class="text-8xl font-bold text-indigo-900 dark:text-indigo-200 transition-colors leading-none">
+					<div class="text-6xl md:text-8xl font-bold text-indigo-900 dark:text-indigo-200 transition-colors leading-none">
 						{$currentProblem.num1} × {$currentProblem.num2}
 					</div>
-					<div class="text-6xl text-gray-400 dark:text-gray-500 mt-2">= ?</div>
+					<div class="text-4xl md:text-6xl text-gray-400 dark:text-gray-500 mt-2">= ?</div>
 				</div>
 
 				<!-- Fixed height feedback area to prevent jumping -->
@@ -273,12 +282,11 @@
 								{#if !$feedback.correct}
 									<br />
 									<span class="text-gray-500 dark:text-gray-400">Answer: {$currentProblem.answer}</span>
-								{/if}
-								{#if $feedback.correct && $feedback.speedCategory === 'fast'}
+								{:else if $feedback.speedCategory === 'fast'}
 									<br /><span class="text-sm">⚡ Lightning fast!</span>
-								{:else if $feedback.correct && $feedback.speedCategory === 'medium'}
+								{:else if $feedback.speedCategory === 'medium'}
 									<br /><span class="text-sm">👍 Good speed!</span>
-								{:else if $feedback.correct && $feedback.speedCategory === 'slow'}
+								{:else}
 									<br /><span class="text-sm">🐢 Try faster!</span>
 								{/if}
 							</div>
@@ -295,6 +303,17 @@
 								<p class="text-sm text-yellow-800 dark:text-yellow-300 font-semibold transition-colors">
 									{$helpMessage}
 								</p>
+								<!-- Keep the raw transcript visible: "didn't catch that" is far more
+								     useful when it also says what was actually heard. -->
+								{#if $transcript}
+									<p class="text-xs text-yellow-700 dark:text-yellow-400 mt-2 transition-colors">
+										Heard: <span class="font-mono">"{$transcript}"</span>
+									</p>
+								{:else}
+									<p class="text-xs text-yellow-700 dark:text-yellow-400 mt-2 transition-colors">
+										No speech was picked up.
+									</p>
+								{/if}
 							</div>
 						</div>
 					{:else if $transcript}
@@ -315,6 +334,7 @@
 					<button
 						onclick={() => ($audioState.isListening ? speechService.stop() : speechService.start())}
 						disabled={$feedback !== null}
+						aria-label={$audioState.isListening ? 'Stop listening' : 'Start listening'}
 						class="relative p-8 rounded-full transition-all {$audioState.isListening
 							? 'bg-red-500 hover:bg-red-600 animate-pulse'
 							: 'bg-indigo-600 hover:bg-indigo-700'} text-white disabled:opacity-50 disabled:cursor-not-allowed shadow-lg"
@@ -333,19 +353,13 @@
 								🔴 Listening...
 							</p>
 							<p class="text-sm text-gray-500 dark:text-gray-400 transition-colors">Speak your answer now</p>
-						{:else if $audioState.autoListen}
-							<p class="text-base text-gray-700 dark:text-gray-300 transition-colors">
-								🎤 Click to Answer
-							</p>
-							<p class="text-sm text-gray-500 dark:text-gray-400 transition-colors">
-								Auto-listening ON • Press <kbd class="px-1 py-0.5 bg-gray-200 dark:bg-gray-700 rounded text-xs">Space</kbd>
-							</p>
 						{:else}
 							<p class="text-base text-gray-700 dark:text-gray-300 transition-colors">
 								🎤 Click to Answer
 							</p>
 							<p class="text-sm text-gray-500 dark:text-gray-400 transition-colors">
-								Auto-listening OFF • Press <kbd class="px-1 py-0.5 bg-gray-200 dark:bg-gray-700 rounded text-xs">Space</kbd>
+								Auto-listening {$audioState.autoListen ? 'ON' : 'OFF'} • Press
+								<kbd class="px-1 py-0.5 bg-gray-200 dark:bg-gray-700 rounded text-xs">Space</kbd>
 							</p>
 						{/if}
 					</div>
@@ -381,30 +395,27 @@
 	</div>
 </div>
 
-<!-- Abandon Session Modal -->
 {#if showAbandonModal}
-	<div class="fixed inset-0 bg-black bg-opacity-50 dark:bg-opacity-70 flex items-center justify-center z-50 transition-opacity">
-		<div class="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl p-8 max-w-md w-full mx-4 transition-colors">
-			<h2 class="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-4 transition-colors">
-				Abandon Session?
-			</h2>
+	<Modal title="Abandon Session?" onclose={() => (showAbandonModal = false)}>
+		{#snippet children()}
 			<p class="text-gray-600 dark:text-gray-300 mb-6 transition-colors">
-				Are you sure you want to abandon this session? All progress will be lost and your answers won't be saved.
+				Are you sure you want to abandon this session? All progress will be lost and your answers
+				won't be saved.
 			</p>
-			<div class="flex gap-3">
-				<button
-					onclick={confirmAbandon}
-					class="flex-1 bg-red-600 hover:bg-red-700 dark:bg-red-500 dark:hover:bg-red-600 text-white font-bold py-3 px-6 rounded-xl transition-colors"
-				>
-					Yes, Abandon
-				</button>
-				<button
-					onclick={() => (showAbandonModal = false)}
-					class="flex-1 bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 font-bold py-3 px-6 rounded-xl transition-colors"
-				>
-					Cancel
-				</button>
-			</div>
-		</div>
-	</div>
+		{/snippet}
+		{#snippet actions()}
+			<button
+				onclick={confirmAbandon}
+				class="flex-1 bg-red-600 hover:bg-red-700 dark:bg-red-500 dark:hover:bg-red-600 text-white font-bold py-3 px-6 rounded-xl transition-colors"
+			>
+				Yes, Abandon
+			</button>
+			<button
+				onclick={() => (showAbandonModal = false)}
+				class="flex-1 bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 font-bold py-3 px-6 rounded-xl transition-colors"
+			>
+				Cancel
+			</button>
+		{/snippet}
+	</Modal>
 {/if}

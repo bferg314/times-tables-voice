@@ -1,66 +1,88 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
-	import { sessionStats, currentScreen, resetSession } from '$lib/stores/session';
+	import { sessionStats, currentScreen, resetSession, availableProblems } from '$lib/stores/session';
 	import { currentUser } from '$lib/stores/users';
 	import { saveSession, isNewHighScore, updateHighScore, getPersonalBest } from '$lib/services/storage';
+	import {
+		sessionAccuracy,
+		sessionAvgTime,
+		correctCount,
+		selectionKey,
+		classifySelection,
+		describeSelection
+	} from '$lib/services/sessionStats';
+	import { customSets, findSetForSelection } from '$lib/stores/problemSets';
 	import type { ProblemStats, HighScore } from '$lib/types';
 
-	let isHighScore = false;
-	let previousBest: HighScore | null = null;
-	let sessionSaved = false;
+	/** How many of the weakest problems to surface for more practice. */
+	const WEAKEST_PROBLEM_COUNT = 5;
 
-	onMount(() => {
-		// Set completion time if not already set
-		if (!$sessionStats.completedAt) {
-			sessionStats.update(s => ({ ...s, completedAt: Date.now() }));
-		}
+	let isHighScore = $state(false);
+	let previousBest = $state<HighScore | null>(null);
 
-		// Check if this is a new high score
-		if ($currentUser && $sessionStats.answers.length > 0) {
-			const problemSetType = 'all'; // TODO: Track actual problem set type
-			isHighScore = isNewHighScore($currentUser.id, problemSetType, $sessionStats);
-			previousBest = getPersonalBest($currentUser.id, problemSetType);
+	const answers = $derived($sessionStats.answers);
+	const totalProblems = $derived(answers.length);
+	const correctAnswers = $derived(correctCount(answers));
+	const accuracy = $derived(sessionAccuracy(answers));
+	const avgTime = $derived(sessionAvgTime(answers));
+	const selectedNumbers = $derived($sessionStats.selectedNumbers ?? []);
 
-			// Auto-save session if user is logged in
-			if (!sessionSaved) {
-				saveSession($currentUser.id, $sessionStats);
-				sessionSaved = true;
+	const totalSessionTime = $derived(
+		$sessionStats.completedAt
+			? $sessionStats.completedAt - $sessionStats.startedAt
+			: Date.now() - $sessionStats.startedAt
+	);
 
-				// Update high score if this is a new best
-				if (isHighScore) {
-					const accuracy = (correctAnswers / totalProblems) * 100;
-					const newHighScore: HighScore = {
-						userId: $currentUser.id,
-						problemSet: 'all',
-						accuracy,
-						avgResponseTime: avgTime,
-						totalProblems,
-						completedAt: Date.now()
-					};
-					updateHighScore($currentUser.id, newHighScore);
-				}
-			}
+	const weakestProblems = $derived.by(() =>
+		Object.entries($sessionStats.problemStats)
+			.map(([problem, stats]) => ({
+				...stats,
+				problem,
+				accuracy: (stats.correct / stats.attempts) * 100,
+				avgTime: stats.totalTime / stats.attempts
+			}))
+			// Weakest first: lowest accuracy, and among equals the slowest.
+			.sort((a, b) => a.accuracy - b.accuracy || b.avgTime - a.avgTime)
+			.slice(0, WEAKEST_PROBLEM_COUNT) satisfies Array<
+			ProblemStats & { problem: string; accuracy: number; avgTime: number }
+		>
+	);
+
+	// Only a session that actually ran out of problems counts. The Report button is
+	// reachable mid-session, and recording a one-answer peek would lock in a 100% best.
+	const isComplete = $derived($availableProblems.length === 0 && answers.length > 0);
+
+	$effect(() => {
+		if (!isComplete || !$currentUser) return;
+
+		const user = $currentUser;
+		const key = selectionKey(selectedNumbers);
+
+		// Runs once: the session is stamped complete, which makes isComplete's inputs stable.
+		if ($sessionStats.completedAt) return;
+
+		previousBest = getPersonalBest(user.id, key);
+		isHighScore = isNewHighScore(user.id, key, $sessionStats);
+
+		const completed = { ...$sessionStats, completedAt: Date.now() };
+		sessionStats.set(completed);
+		saveSession(user.id, completed);
+
+		if (isHighScore) {
+			const savedSet = findSetForSelection($customSets, selectedNumbers);
+			updateHighScore(user.id, {
+				userId: user.id,
+				selectionKey: key,
+				selectedNumbers: [...selectedNumbers],
+				problemSet: classifySelection(selectedNumbers),
+				customSetId: savedSet?.id,
+				customSetName: savedSet?.name,
+				accuracy: sessionAccuracy(completed.answers),
+				avgResponseTime: sessionAvgTime(completed.answers),
+				totalProblems: completed.answers.length,
+				completedAt: completed.completedAt!
+			});
 		}
 	});
-
-	function getProblemChildren(): Array<ProblemStats & { problem: string; accuracy: number; avgTime: number }> {
-		const statsArray = Object.entries($sessionStats.problemStats).map(([problem, stats]) => ({
-			...stats,
-			problem,
-			accuracy: (stats.correct / stats.attempts) * 100,
-			avgTime: stats.totalTime / stats.attempts
-		}));
-
-		// Sort by accuracy (ascending) then by avg time (descending)
-		return statsArray
-			.sort((a, b) => {
-				if (Math.abs(a.accuracy - b.accuracy) > 10) {
-					return a.accuracy - b.accuracy;
-				}
-				return b.avgTime - a.avgTime;
-			})
-			.slice(0, 5);
-	}
 
 	function startNewSession() {
 		resetSession();
@@ -71,34 +93,28 @@
 		currentScreen.set('history');
 	}
 
-	$: totalProblems = $sessionStats.answers.length;
-	$: correctAnswers = $sessionStats.answers.filter((s) => s.correct).length;
-	$: avgTime =
-		totalProblems > 0
-			? $sessionStats.answers.reduce((sum, s) => sum + s.responseTime, 0) / totalProblems
-			: 0;
-	$: totalSessionTime = $sessionStats.completedAt
-		? $sessionStats.completedAt - $sessionStats.startedAt
-		: Date.now() - $sessionStats.startedAt;
-	$: problemChildren = getProblemChildren();
-
 	function formatSessionTime(ms: number): string {
 		const totalSeconds = Math.floor(ms / 1000);
 		const minutes = Math.floor(totalSeconds / 60);
 		const seconds = totalSeconds % 60;
-		if (minutes > 0) {
-			return `${minutes}m ${seconds}s`;
-		}
-		return `${seconds}s`;
+		return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
 	}
 </script>
 
 <div class="max-w-4xl mx-auto bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-8 transition-colors">
-	<h1 class="text-4xl font-bold text-indigo-900 dark:text-indigo-300 mb-8 text-center transition-colors">Session Complete! 🎉</h1>
+	<h1 class="text-4xl font-bold text-indigo-900 dark:text-indigo-300 mb-2 text-center transition-colors">
+		{isComplete ? 'Session Complete! 🎉' : 'Progress So Far 📈'}
+	</h1>
+	<p class="text-center text-gray-500 dark:text-gray-400 mb-8 transition-colors">
+		{describeSelection(selectedNumbers)}
+		{#if !isComplete}
+			<span class="block text-sm mt-1">Not saved yet — finish the session to record it.</span>
+		{/if}
+	</p>
 
 	<!-- High Score Celebration -->
 	{#if isHighScore && $currentUser}
-		<div class="mb-8 bg-gradient-to-r from-yellow-100 to-orange-100 dark:from-yellow-900/40 dark:to-orange-900/40 border-4 border-yellow-400 dark:border-yellow-600 rounded-2xl p-6 animate-pulse transition-colors">
+		<div class="mb-8 bg-gradient-to-r from-yellow-100 to-orange-100 dark:from-yellow-900/40 dark:to-orange-900/40 border-4 border-yellow-400 dark:border-yellow-600 rounded-2xl p-6 transition-colors">
 			<div class="text-center">
 				<div class="text-5xl mb-2">🏆</div>
 				<div class="text-2xl font-bold text-orange-900 dark:text-orange-200 mb-2 transition-colors">NEW HIGH SCORE!</div>
@@ -106,7 +122,7 @@
 					{#if previousBest}
 						Beat your previous best of {Math.round(previousBest.accuracy)}% accuracy!
 					{:else}
-						Your first high score!
+						Your first high score for {describeSelection(selectedNumbers)}!
 					{/if}
 				</div>
 			</div>
@@ -116,7 +132,7 @@
 	<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
 		<div class="text-center p-6 bg-indigo-50 dark:bg-indigo-900/30 rounded-xl transition-colors">
 			<div class="text-4xl font-bold text-indigo-900 dark:text-indigo-300 transition-colors">
-				{totalProblems > 0 ? Math.round((correctAnswers / totalProblems) * 100) : 0}%
+				{Math.round(accuracy)}%
 			</div>
 			<div class="text-gray-600 dark:text-gray-400 mt-2 transition-colors">Accuracy</div>
 		</div>
@@ -137,11 +153,11 @@
 		</div>
 	</div>
 
-	{#if problemChildren.length > 0}
+	{#if weakestProblems.length > 0}
 		<div class="mb-8">
 			<h2 class="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-4 transition-colors">Problems to Practice 📚</h2>
 			<div class="space-y-3">
-				{#each problemChildren as stat}
+				{#each weakestProblems as stat (stat.problem)}
 					<div class="p-4 bg-gray-50 dark:bg-gray-700 rounded-lg flex justify-between items-center transition-colors">
 						<div>
 							<span class="text-xl font-bold text-indigo-900 dark:text-indigo-300 transition-colors">{stat.problem}</span>
@@ -157,6 +173,14 @@
 	{/if}
 
 	<div class="flex gap-4">
+		{#if $availableProblems.length > 0}
+			<button
+				onclick={() => currentScreen.set('practice')}
+				class="flex-1 bg-green-600 hover:bg-green-700 dark:bg-green-700 dark:hover:bg-green-600 text-white font-bold py-4 px-6 rounded-xl transition-colors"
+			>
+				▶️ Resume
+			</button>
+		{/if}
 		<button
 			onclick={startNewSession}
 			class="flex-1 bg-indigo-600 hover:bg-indigo-700 dark:bg-indigo-700 dark:hover:bg-indigo-600 text-white font-bold py-4 px-6 rounded-xl transition-colors"

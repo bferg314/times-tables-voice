@@ -1,8 +1,6 @@
 <script lang="ts">
 	import { selectedNumbers } from '$lib/stores/session';
-	import { getPresetNumbers } from '$lib/services/problemGenerator';
-
-	const allNumbers = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+	import { ALL_NUMBERS, getPresetNumbers } from '$lib/services/problemGenerator';
 
 	function toggleNumber(num: number) {
 		selectedNumbers.update((nums) => {
@@ -33,7 +31,7 @@
 </script>
 
 <div class="grid grid-cols-7 gap-3 mb-8">
-	{#each allNumbers as num}
+	{#each ALL_NUMBERS as num (num)}
 		<button
 			onclick={() => toggleNumber(num)}
 			class="aspect-square rounded-xl text-2xl font-bold transition-all {$selectedNumbers.includes(
