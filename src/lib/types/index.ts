@@ -47,13 +47,19 @@ export interface SessionStats {
 	totalProblems: number;
 	startedAt: number;
 	completedAt?: number;
-	problemSetType?: ProblemSet | string; // 'all', 'hard', 'random', or custom set ID
-	selectedNumbers?: number[]; // Which times tables were practiced
+	/** Which times tables were practised. The identity of the session's problem set. */
+	selectedNumbers?: number[];
 }
 
 // High scores & history
 export interface HighScore {
 	userId: string;
+	/**
+	 * Canonical identity of the times tables practised, e.g. "6,7,8,9,11,12".
+	 * High scores are compared within a selection, never across selections.
+	 */
+	selectionKey: string;
+	selectedNumbers: number[];
 	problemSet: ProblemSet;
 	customSetId?: string;
 	customSetName?: string;

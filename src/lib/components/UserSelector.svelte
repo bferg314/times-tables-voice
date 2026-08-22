@@ -1,12 +1,13 @@
 <script lang="ts">
-	import { users, currentUser, switchUser, refreshUsers } from '$lib/stores/users';
+	import { users, currentUser, switchUser, refreshUsers, reloadCurrentUser } from '$lib/stores/users';
 	import { createUser, deleteUser } from '$lib/services/storage';
+	import Modal from './Modal.svelte';
 
-	let showNewUserDialog = false;
-	let showUserList = false;
-	let newUserName = '';
-	let showDeleteModal = false;
-	let userToDelete: string | null = null;
+	let showNewUserDialog = $state(false);
+	let showUserList = $state(false);
+	let newUserName = $state('');
+	let showDeleteModal = $state(false);
+	let userToDelete = $state<string | null>(null);
 
 	function handleCreateUser() {
 		if (newUserName.trim()) {
@@ -33,10 +34,23 @@
 		if (userToDelete) {
 			deleteUser(userToDelete);
 			refreshUsers();
+			// deleteUser also clears the persisted current-user pointer, so the store
+			// has to be re-read or it keeps pointing at a user that no longer exists.
+			reloadCurrentUser();
 			showUserList = false;
 			showDeleteModal = false;
 			userToDelete = null;
 		}
+	}
+
+	function cancelNewUser() {
+		showNewUserDialog = false;
+		newUserName = '';
+	}
+
+	function cancelDelete() {
+		showDeleteModal = false;
+		userToDelete = null;
 	}
 
 	function handleKeydown(e: KeyboardEvent) {
@@ -113,9 +127,8 @@
 
 	<!-- New user dialog -->
 	{#if showNewUserDialog}
-		<div class="fixed inset-0 bg-black bg-opacity-50 dark:bg-opacity-70 flex items-center justify-center z-50 transition-opacity">
-			<div class="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl p-8 max-w-md w-full mx-4 transition-colors">
-				<h2 class="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-4 transition-colors">Create New User</h2>
+		<Modal title="Create New User" onclose={cancelNewUser}>
+			{#snippet children()}
 				<input
 					type="text"
 					bind:value={newUserName}
@@ -123,26 +136,23 @@
 					placeholder="Enter your name"
 					class="w-full px-4 py-3 border-2 border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded-xl focus:border-indigo-500 dark:focus:border-indigo-400 focus:outline-none mb-4 transition-colors placeholder:text-gray-400 dark:placeholder:text-gray-500"
 				/>
-				<div class="flex gap-3">
-					<button
-						onclick={handleCreateUser}
-						disabled={!newUserName.trim()}
-						class="flex-1 bg-indigo-600 hover:bg-indigo-700 dark:bg-indigo-500 dark:hover:bg-indigo-600 text-white font-bold py-3 px-6 rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-					>
-						Create
-					</button>
-					<button
-						onclick={() => {
-							showNewUserDialog = false;
-							newUserName = '';
-						}}
-						class="flex-1 bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 font-bold py-3 px-6 rounded-xl transition-colors"
-					>
-						Cancel
-					</button>
-				</div>
-			</div>
-		</div>
+			{/snippet}
+			{#snippet actions()}
+				<button
+					onclick={handleCreateUser}
+					disabled={!newUserName.trim()}
+					class="flex-1 bg-indigo-600 hover:bg-indigo-700 dark:bg-indigo-500 dark:hover:bg-indigo-600 text-white font-bold py-3 px-6 rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+				>
+					Create
+				</button>
+				<button
+					onclick={cancelNewUser}
+					class="flex-1 bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 font-bold py-3 px-6 rounded-xl transition-colors"
+				>
+					Cancel
+				</button>
+			{/snippet}
+		</Modal>
 	{/if}
 </div>
 
@@ -157,31 +167,25 @@
 
 <!-- Delete User Modal -->
 {#if showDeleteModal}
-	<div class="fixed inset-0 bg-black bg-opacity-50 dark:bg-opacity-70 flex items-center justify-center z-50 transition-opacity">
-		<div class="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl p-8 max-w-md w-full mx-4 transition-colors">
-			<h2 class="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-4 transition-colors">
-				Delete User?
-			</h2>
+	<Modal title="Delete User?" onclose={cancelDelete}>
+		{#snippet children()}
 			<p class="text-gray-600 dark:text-gray-300 mb-6 transition-colors">
 				Are you sure you want to delete this user and all their data? This action cannot be undone.
 			</p>
-			<div class="flex gap-3">
-				<button
-					onclick={confirmDelete}
-					class="flex-1 bg-red-600 hover:bg-red-700 dark:bg-red-500 dark:hover:bg-red-600 text-white font-bold py-3 px-6 rounded-xl transition-colors"
-				>
-					Yes, Delete
-				</button>
-				<button
-					onclick={() => {
-						showDeleteModal = false;
-						userToDelete = null;
-					}}
-					class="flex-1 bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 font-bold py-3 px-6 rounded-xl transition-colors"
-				>
-					Cancel
-				</button>
-			</div>
-		</div>
-	</div>
+		{/snippet}
+		{#snippet actions()}
+			<button
+				onclick={confirmDelete}
+				class="flex-1 bg-red-600 hover:bg-red-700 dark:bg-red-500 dark:hover:bg-red-600 text-white font-bold py-3 px-6 rounded-xl transition-colors"
+			>
+				Yes, Delete
+			</button>
+			<button
+				onclick={cancelDelete}
+				class="flex-1 bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 font-bold py-3 px-6 rounded-xl transition-colors"
+			>
+				Cancel
+			</button>
+		{/snippet}
+	</Modal>
 {/if}

@@ -1,54 +1,69 @@
+import { get } from 'svelte/store';
 import { audioState } from '$lib/stores/audio';
+
+const SMOOTHING = 0.8;
+const FFT_SIZE = 256;
+/** Children speak quietly; amplify so the meter is legible. */
+const GAIN_BOOST = 2.0;
+/** Byte frequency data is 0-255; half-scale reads as "full" on the meter. */
+const VOLUME_SCALE = 128;
 
 export class AudioVisualizationService {
 	private audioContext: AudioContext | null = null;
 	private analyser: AnalyserNode | null = null;
 	private microphone: MediaStreamAudioSourceNode | null = null;
 	private gainNode: GainNode | null = null;
+	private stream: MediaStream | null = null;
+	private frequencyData: Uint8Array<ArrayBuffer> | null = null;
 	private animationId: number | null = null;
 
 	async init() {
-		if (typeof window === 'undefined') return;
+		if (typeof window === 'undefined' || this.audioContext) return;
 
 		try {
-			const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+			this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 			this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
 			this.analyser = this.audioContext.createAnalyser();
 			this.gainNode = this.audioContext.createGain();
-			this.microphone = this.audioContext.createMediaStreamSource(stream);
+			this.microphone = this.audioContext.createMediaStreamSource(this.stream);
 
-			this.analyser.smoothingTimeConstant = 0.8;
-			this.analyser.fftSize = 256;
+			this.analyser.smoothingTimeConstant = SMOOTHING;
+			this.analyser.fftSize = FFT_SIZE;
+			this.gainNode.gain.value = GAIN_BOOST;
 
-			// Set initial gain boost (2.0 = 2x amplification)
-			this.gainNode.gain.value = 2.0;
-
-			// Connect: microphone -> gain -> analyser
+			// microphone -> gain -> analyser
 			this.microphone.connect(this.gainNode);
 			this.gainNode.connect(this.analyser);
 
+			this.frequencyData = new Uint8Array(new ArrayBuffer(this.analyser.frequencyBinCount));
 			this.updateVolume();
 		} catch (err) {
 			console.error('Audio visualization error:', err);
+			audioState.update((s) => ({
+				...s,
+				error: 'Could not access the microphone. Please allow microphone access.'
+			}));
+			this.stop();
 		}
 	}
 
 	private updateVolume() {
-		if (!this.analyser) return;
+		if (!this.analyser || !this.frequencyData) return;
 
-		const bufferLength = this.analyser.frequencyBinCount;
-		const dataArray = new Uint8Array(bufferLength);
-		this.analyser.getByteFrequencyData(dataArray);
+		// Only publish while listening: this runs ~60x/sec and every write notifies
+		// every $audioState subscriber in the practice screen.
+		if (get(audioState).isListening) {
+			this.analyser.getByteFrequencyData(this.frequencyData);
 
-		let sum = 0;
-		for (let i = 0; i < bufferLength; i++) {
-			sum += dataArray[i];
+			let sum = 0;
+			for (let i = 0; i < this.frequencyData.length; i++) {
+				sum += this.frequencyData[i];
+			}
+			const average = sum / this.frequencyData.length;
+			const volumeLevel = Math.min(100, (average / VOLUME_SCALE) * 100);
+
+			audioState.update((s) => ({ ...s, volumeLevel }));
 		}
-		const average = sum / bufferLength;
-		const volumeLevel = Math.min(100, (average / 128) * 100);
-
-		// Update store instead of DOM
-		audioState.update((s) => ({ ...s, volumeLevel }));
 
 		this.animationId = requestAnimationFrame(() => this.updateVolume());
 	}
@@ -58,19 +73,21 @@ export class AudioVisualizationService {
 			cancelAnimationFrame(this.animationId);
 			this.animationId = null;
 		}
-		if (this.gainNode) {
-			this.gainNode.disconnect();
-			this.gainNode = null;
-		}
-		if (this.microphone) {
-			this.microphone.disconnect();
-			this.microphone = null;
-		}
-		if (this.audioContext) {
-			this.audioContext.close();
-			this.audioContext = null;
-		}
+		this.gainNode?.disconnect();
+		this.gainNode = null;
+		this.microphone?.disconnect();
+		this.microphone = null;
+
+		// Releasing the nodes is not enough - without stopping the tracks the
+		// browser's microphone indicator stays lit for the lifetime of the tab.
+		this.stream?.getTracks().forEach((track) => track.stop());
+		this.stream = null;
+
+		this.audioContext?.close().catch(() => {});
+		this.audioContext = null;
+
 		this.analyser = null;
+		this.frequencyData = null;
 		audioState.update((s) => ({ ...s, volumeLevel: 0 }));
 	}
 }

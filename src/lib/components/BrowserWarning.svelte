@@ -2,8 +2,8 @@
 	import { onMount } from 'svelte';
 	import { detectBrowserSupport, type BrowserInfo } from '$lib/utils/browserDetection';
 
-	let browserInfo: BrowserInfo | null = null;
-	let dismissed = false;
+	let browserInfo = $state<BrowserInfo | null>(null);
+	let dismissed = $state(false);
 
 	onMount(() => {
 		browserInfo = detectBrowserSupport();
