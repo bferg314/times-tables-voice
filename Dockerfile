@@ -38,5 +38,8 @@ ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOST=0.0.0.0
 
+# The server writes no files, so run it as the image's unprivileged node user
+USER node
+
 # Start the application
 CMD ["node", "build"]
