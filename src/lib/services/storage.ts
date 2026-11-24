@@ -4,7 +4,7 @@ import type {
 	HighScore,
 	CustomProblemSet,
 	PracticeHistory
-} from '$lib/types';
+} from '#lib/types/index.ts';
 import { sessionAccuracy, sessionAvgTime } from './sessionStats';
 
 // Storage keys

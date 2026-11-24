@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { audioState } from '$lib/stores/audio';
+	import { audioState } from '#lib/stores/audio.ts';
 </script>
 
 {#if $audioState.isListening}

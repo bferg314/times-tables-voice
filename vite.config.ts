@@ -1,4 +1,6 @@
+import adapter from '@sveltejs/adapter-node';
 import { sveltekit } from '@sveltejs/kit/vite';
+import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 import { defineConfig } from 'vitest/config';
 
 const network = {
@@ -10,7 +12,8 @@ const network = {
 };
 
 export default defineConfig({
-	plugins: [sveltekit()],
+	// SvelteKit 3 takes its config here; svelte.config.js is no longer read.
+	plugins: [sveltekit({ adapter: adapter(), preprocess: vitePreprocess() })],
 	server: network,
 	test: {
 		environment: 'node',

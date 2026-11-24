@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { selectedNumbers } from '$lib/stores/session';
-	import { ALL_NUMBERS, getPresetNumbers } from '$lib/services/problemGenerator';
+	import { selectedNumbers } from '#lib/stores/session.ts';
+	import { ALL_NUMBERS, getPresetNumbers } from '#lib/services/problemGenerator.ts';
 
 	function toggleNumber(num: number) {
 		selectedNumbers.update((nums) => {

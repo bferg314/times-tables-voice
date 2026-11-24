@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { detectBrowserSupport, type BrowserInfo } from '$lib/utils/browserDetection';
+	import { detectBrowserSupport, type BrowserInfo } from '#lib/utils/browserDetection.ts';
 
 	let browserInfo = $state<BrowserInfo | null>(null);
 	let dismissed = $state(false);

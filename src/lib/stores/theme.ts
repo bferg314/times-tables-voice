@@ -1,6 +1,6 @@
 import { writable } from 'svelte/store';
-import { browser } from '$app/environment';
-import { KEYS } from '$lib/services/storage';
+import { browser } from '$app/env';
+import { KEYS } from '#lib/services/storage.ts';
 
 // Get initial theme from localStorage or system preference
 function getInitialTheme(): 'light' | 'dark' {
@@ -21,7 +21,7 @@ export const isDarkMode = writable<boolean>(getInitialTheme() === 'dark');
 
 // Subscribe to changes and update localStorage + document class
 if (browser) {
-	isDarkMode.subscribe(dark => {
+	isDarkMode.subscribe((dark) => {
 		localStorage.setItem(KEYS.THEME, dark ? 'dark' : 'light');
 		if (dark) {
 			document.documentElement.classList.add('dark');
@@ -32,5 +32,5 @@ if (browser) {
 }
 
 export function toggleDarkMode() {
-	isDarkMode.update(dark => !dark);
+	isDarkMode.update((dark) => !dark);
 }

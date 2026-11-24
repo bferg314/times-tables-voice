@@ -1,9 +1,9 @@
 <script lang="ts">
-	import { selectedNumbers, currentScreen, availableProblems, sessionStats, resetSession } from '$lib/stores/session';
-	import { currentUser } from '$lib/stores/users';
-	import { customSets, saveSelectionAsSet, removeCustomSet, findSetForSelection } from '$lib/stores/problemSets';
-	import { generateProblems, countProblems } from '$lib/services/problemGenerator';
-	import { describeSelection } from '$lib/services/sessionStats';
+	import { selectedNumbers, currentScreen, availableProblems, sessionStats, resetSession } from '#lib/stores/session.ts';
+	import { currentUser } from '#lib/stores/users.ts';
+	import { customSets, saveSelectionAsSet, removeCustomSet, findSetForSelection } from '#lib/stores/problemSets.ts';
+	import { generateProblems, countProblems } from '#lib/services/problemGenerator.ts';
+	import { describeSelection } from '#lib/services/sessionStats.ts';
 	import NumberGrid from './NumberGrid.svelte';
 	import UserSelector from './UserSelector.svelte';
 	import BrowserWarning from './BrowserWarning.svelte';

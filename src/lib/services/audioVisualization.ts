@@ -1,5 +1,5 @@
 import { get } from 'svelte/store';
-import { audioState } from '$lib/stores/audio';
+import { audioState } from '#lib/stores/audio.ts';
 
 const SMOOTHING = 0.8;
 const FFT_SIZE = 256;

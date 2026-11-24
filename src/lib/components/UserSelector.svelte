@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { users, currentUser, switchUser, refreshUsers, reloadCurrentUser } from '$lib/stores/users';
-	import { createUser, deleteUser } from '$lib/services/storage';
+	import { users, currentUser, switchUser, refreshUsers, reloadCurrentUser } from '#lib/stores/users.ts';
+	import { createUser, deleteUser } from '#lib/services/storage.ts';
 	import Modal from './Modal.svelte';
 
 	let showNewUserDialog = $state(false);

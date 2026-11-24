@@ -1,4 +1,4 @@
-import type { SessionStats, SessionAnswer, ProblemSet } from '$lib/types';
+import type { SessionStats, SessionAnswer, ProblemSet } from '#lib/types/index.ts';
 import { ALL_NUMBERS, getPresetNumbers } from './problemGenerator';
 
 /** Percentage of answers that were correct. 0 for an empty session. */

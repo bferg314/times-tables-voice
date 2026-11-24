@@ -1,11 +1,11 @@
 import { writable, get } from 'svelte/store';
-import type { CustomProblemSet } from '$lib/types';
+import type { CustomProblemSet } from '#lib/types/index.ts';
 import {
 	getCustomProblemSets,
 	saveCustomProblemSet,
 	deleteCustomProblemSet
-} from '$lib/services/storage';
-import { selectionKey } from '$lib/services/sessionStats';
+} from '#lib/services/storage.ts';
+import { selectionKey } from '#lib/services/sessionStats.ts';
 import { currentUser } from './users';
 
 export const customSets = writable<CustomProblemSet[]>([]);

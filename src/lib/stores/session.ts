@@ -1,6 +1,6 @@
 import { writable } from 'svelte/store';
-import type { SessionStats, Problem, SessionAnswer, AppScreen } from '$lib/types';
-import { ALL_NUMBERS } from '$lib/services/problemGenerator';
+import type { SessionStats, Problem, SessionAnswer, AppScreen } from '#lib/types/index.ts';
+import { ALL_NUMBERS } from '#lib/services/problemGenerator.ts';
 
 // Current screen state
 export const currentScreen = writable<AppScreen>('setup');
