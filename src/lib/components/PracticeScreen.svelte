@@ -11,13 +11,13 @@
 		resetSession,
 		helpMessage,
 		autoAdvanceCountdown
-	} from '$lib/stores/session';
-	import { audioState } from '$lib/stores/audio';
-	import { speechService } from '$lib/services/speechRecognition';
-	import { audioService } from '$lib/services/audioVisualization';
-	import { categorizeSpeed } from '$lib/services/problemGenerator';
-	import { practiceProgress } from '$lib/services/sessionStats';
-	import type { SessionAnswer } from '$lib/types';
+	} from '#lib/stores/session.ts';
+	import { audioState } from '#lib/stores/audio.ts';
+	import { speechService } from '#lib/services/speechRecognition.ts';
+	import { audioService } from '#lib/services/audioVisualization.ts';
+	import { categorizeSpeed } from '#lib/services/problemGenerator.ts';
+	import { practiceProgress } from '#lib/services/sessionStats.ts';
+	import type { SessionAnswer } from '#lib/types/index.ts';
 	import VolumeBar from './VolumeBar.svelte';
 	import Modal from './Modal.svelte';
 

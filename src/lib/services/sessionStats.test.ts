@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import type { SessionAnswer } from '$lib/types';
+import type { SessionAnswer } from '#lib/types/index.ts';
 import {
 	sessionAccuracy,
 	sessionAvgTime,

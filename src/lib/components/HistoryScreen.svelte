@@ -1,9 +1,9 @@
 <script lang="ts">
-	import { currentScreen } from '$lib/stores/session';
-	import { currentUser } from '$lib/stores/users';
-	import { getUserHistory, getHighScores } from '$lib/services/storage';
-	import { sessionAccuracy, sessionAvgTime, describeSelection } from '$lib/services/sessionStats';
-	import { customSets, findSetForSelection } from '$lib/stores/problemSets';
+	import { currentScreen } from '#lib/stores/session.ts';
+	import { currentUser } from '#lib/stores/users.ts';
+	import { getUserHistory, getHighScores } from '#lib/services/storage.ts';
+	import { sessionAccuracy, sessionAvgTime, describeSelection } from '#lib/services/sessionStats.ts';
+	import { customSets, findSetForSelection } from '#lib/stores/problemSets.ts';
 
 	/** How many recent sessions to list. */
 	const RECENT_SESSION_LIMIT = 20;

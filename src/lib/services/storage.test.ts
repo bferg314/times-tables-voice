@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import type { HighScore, SessionStats, SessionAnswer } from '$lib/types';
+import type { HighScore, SessionStats, SessionAnswer } from '#lib/types/index.ts';
 
 // storage.ts guards every call on `typeof window`, so both must exist before import.
 class MemoryStorage {

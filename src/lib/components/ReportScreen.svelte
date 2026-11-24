@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { sessionStats, currentScreen, resetSession, availableProblems } from '$lib/stores/session';
-	import { currentUser } from '$lib/stores/users';
-	import { saveSession, isNewHighScore, updateHighScore, getPersonalBest } from '$lib/services/storage';
+	import { sessionStats, currentScreen, resetSession, availableProblems } from '#lib/stores/session.ts';
+	import { currentUser } from '#lib/stores/users.ts';
+	import { saveSession, isNewHighScore, updateHighScore, getPersonalBest } from '#lib/services/storage.ts';
 	import {
 		sessionAccuracy,
 		sessionAvgTime,
@@ -9,9 +9,9 @@
 		selectionKey,
 		classifySelection,
 		describeSelection
-	} from '$lib/services/sessionStats';
-	import { customSets, findSetForSelection } from '$lib/stores/problemSets';
-	import type { ProblemStats, HighScore } from '$lib/types';
+	} from '#lib/services/sessionStats.ts';
+	import { customSets, findSetForSelection } from '#lib/stores/problemSets.ts';
+	import type { ProblemStats, HighScore } from '#lib/types/index.ts';
 
 	/** How many of the weakest problems to surface for more practice. */
 	const WEAKEST_PROBLEM_COUNT = 5;

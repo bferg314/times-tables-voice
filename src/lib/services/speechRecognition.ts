@@ -1,7 +1,7 @@
-import { audioState } from '$lib/stores/audio';
-import { transcript } from '$lib/stores/session';
+import { audioState } from '#lib/stores/audio.ts';
+import { transcript } from '#lib/stores/session.ts';
 import { parseSpokenNumber } from './problemGenerator';
-import { detectBrowserSupport } from '$lib/utils/browserDetection';
+import { detectBrowserSupport } from '#lib/utils/browserDetection.ts';
 
 /** Delay before dispatching a result, so the user can read what was heard. */
 const RESULT_DISPATCH_MS = 500;
@@ -70,7 +70,11 @@ export class SpeechRecognitionService {
 			debug('error', event.error);
 			audioState.update((s) => ({ ...s, isListening: false }));
 
-			if (event.error === 'not-allowed' || event.error === 'permission-denied') {
+			if (
+				event.error === 'not-allowed' ||
+				// Not in the spec's error list (so not in TypeScript's DOM types), but some browsers send it.
+				(event.error as string) === 'permission-denied'
+			) {
 				// Permanent: retrying would loop forever behind a denied permission prompt.
 				this.fatal = true;
 				audioState.update((s) => ({

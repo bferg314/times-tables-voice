@@ -1,4 +1,4 @@
-import type { Problem } from '$lib/types';
+import type { Problem } from '#lib/types/index.ts';
 
 /** The times tables this app covers. */
 export const ALL_NUMBERS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
